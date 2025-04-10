@@ -247,5 +247,8 @@ markmap:
     - geoadd
     - geopos
     - geohash
+##### 使用场景
+- 数据一致性
+
 ## memcached
 ### Key-Value Pair
