@@ -312,6 +312,12 @@ markmap:
     |延时双删策略|最终一致性|并发写敏感的高一致性场景|中|
     |异步消息队列同步|最终一致性|高并发、高可用要求的复杂场景|高|
     |Binlog 同步|强一致性|数据一致性高要求、复杂系统|高|
-
+- 排行榜
+  - 存储分数和成员 数据结构SortedSet 
+  - 新增排行 ZADD命令 `ZADD leaderboard 1000 user1`
+  - 获取排名 ZRANK命令 `ZRANK leaderboard user1`
+  - 获取前N名 ZREVRANGE命令 `ZREVRANGE leaderboard 0 9 WITHSCORES` 
+  - 更新分数 ZINCRBY命令 `ZINCRBY leaderboard 500 user1`
+- 布隆过滤器
 ## memcached
 ### Key-Value Pair
