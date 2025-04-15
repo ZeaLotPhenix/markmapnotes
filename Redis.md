@@ -247,7 +247,7 @@ markmap:
     - geoadd
     - geopos
     - geohash
-##### 使用场景
+#### 应用场景
 - 数据一致性
   - 思考点
     - 原子性:读操作/写操作对于数据库和缓存的读写都不是原子的,读写操作对于数据库和Reids的读写指令可能交叉
@@ -318,6 +318,63 @@ markmap:
   - 获取排名 ZRANK命令 `ZRANK leaderboard user1`
   - 获取前N名 ZREVRANGE命令 `ZREVRANGE leaderboard 0 9 WITHSCORES` 
   - 更新分数 ZINCRBY命令 `ZINCRBY leaderboard 500 user1`
-- 布隆过滤器
+- 存在检测
+  - 布隆过滤器
+    - bitmap位图(Redis自带数据结构)
+      - `SETBIT key offset value`
+      - `GETBIT key offset`
+      - `BITCOUNT key [start end]`
+      - `BITOP operation destkey key [key...]`
+    - RedisBloom(Redis官方插件)
+      - 创建布隆过滤器`BF.RESERVE myBloomFilter 0.01 1000000`
+      - 添加元素`BF.ADD myBloomFilter "item1"`
+      - 检测元素是否存在`BF.EXISTS myBloomFilter "item1"    # 返回 1（可能存在）# 返回 （一定不存在）`
+    - 布谷鸟过滤器
+  - 应用场景
+    - 爬虫(URL去重)
+    - 黑名单
+    - 分布式系统优化:存储数据是否存在该节点(Hadoop/Cassandra)
+    - 推荐系统避免重复推荐
+- 分布式锁
+  - Redisson
+    借助Redis的原子性来保证只有一个线程可以获得锁
+    - 锁的获取
+      - Lua脚本
+        - `exists+hexists+hincrby`保证只有一个线程可以设置key
+        - `pexpire`设置key过期时间防止死锁
+    - 锁的续期
+      - WatchDog机制定期续期,更新key过期时间
+    - 锁的释放
+      - Lua脚本
+        - `hexists+del`保证设置key的线程才能释放锁
+        - `publish`命令广播唤醒等待key的其他线程
+    - 锁的重入
+      - Redis Hash结构的Key为线程ID,重入value+1,释放value-1
+    - 锁类型
+      - 公平锁: 按线程请求顺序获得锁
+      - 读写锁: 支持读写分离
+      - 信号量与可数锁: 允许多个线程同时持有锁,适用于资源的限流和控制
+  - RedLock红锁
+    - 部署要求:
+      - 集群部署+至少5个实例
+      - 仅需主库,从库和哨兵非必须
+    - 实现原理
+      - 所有实例依次申请加锁,加锁过半则成功,否则失败
+    - 具体流程
+      - 获取当前时间t1
+      - 依次申请所有实例加锁,每个加锁过程超时时间远小于锁过期时间
+      - 过半加锁成功则获取当前时间t2
+      - 总耗时t=(t2-t1)小于锁过期时间则加锁成功
+      - 加锁失败则向全部节点发起释放锁流程
+    - 失败场景
+      - 原线程加锁后GC STW导致锁过期,其他线程抢到锁,原线程STW结束后仍以为自己持有锁
+      - 始终飘逸
+  - 分布式锁的问题
+    - 锁的过期
+      续期设计
+    - 网络分区
+      Redlock算法
+
+
 ## memcached
 ### Key-Value Pair
