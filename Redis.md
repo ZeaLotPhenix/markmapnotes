@@ -1,7 +1,7 @@
 ---
 title: 缓存中间件
 markmap:
-  colorFreezeLevel: 2
+  colorFreezeLevel: 0
 ---
 
 ## Redis
@@ -46,11 +46,12 @@ markmap:
 - 4K操作系统,从硬盘中每一次读取最小4k
 ### 设计原理
 #### 数据结构 *Key-Value Pair*
-##### Redis的数据结构<!-- markmap: fold -->
+##### Redis的数据结构
 - 简单动态字符串*SimpleDynamicString*(SDS)
   ==Redis自定义的字符串==
   - sds.h
-  - |len|alloc|flags|buf[]|
+  - 整体结构
+    |len|alloc|flags|buf[]|
     |:-:|:-:|:-:|:-:|
     |4|4|1|n,a,m,e,\0|
   - *优点*
@@ -61,44 +62,96 @@ markmap:
 - IntSet
   ==数据量不多时使用==
   - intset.h
-  - |encoding|length|contents|
-    |:-:|:-:|:-:|
-    |INTSET_ENC_INT32|4|5,10,20,50000|
+  - 整体结构
+      |encoding|length|contents|
+      |:-:|:-:|:-:|
+      |INTSET_ENC_INT32|4|5,10,20,50000|
   - *优点*
       元素唯一且有序
       类型升级机制(节约内存空间)
       二分查找算法提升效率
-- Dict
-  ==不连续的内存空间,浪费严重==
-  - 哈希表*DictHashTable*
-  - 哈希节点*HashEntity*
+- Dict(Dictionary字典)
+  ==一个哈希表,用来存储键值类型的数据==
+  - 整体结构
+    |type|privdata|dictht|rehashidx|
+    |:-:|:-:|:-:|:-:|
+    |类型特定函数|私有数据|哈希表(两个,另一个做rehash时用)|rehash索引(非rehash时为-1)|
+    - dictht结构
+      |table|size|sizemask|used|
+      |:-:|:-:|:-:|:-:|
+      |哈希表数组(键值对)|哈希表大小|哈希表掩码|已用节点数量|
+      - table结构(dictEntry哈希表节点)
+        |key|val|next|
+        |:-:|:-:|:-:|
+        |key值|value值|next节点指针|
   - 字典*Dict*
   - *Dict的扩容*`static int _dictExpandIfNeeded(dict *d)`
       结构类似Java的HashTable(数组+链表),但有2个DictHashTable
       扩缩容时渐进式rehash(一次只迁移部分数据)
       渐进式rehash时新数据只添加到新表上
-- ZipList(特殊的双向链表)
-  ==连续的内存空间,申请效率低==
-  - 使用prevrawlen(前一个节点的长度)来替代prev指针,len替代next指针
-  - ~~缺点~~
-    级联更新问题
+- ZipList(压缩列表) 
+  ==一种紧凑的数据结构,所有元素紧密的排列在单个连续内存块中,节省空间==
+  - 单个连续的内存空间,申请效率低
+  - 不适合频繁修改或大量数据存储
+  - 整体结构
+    |zlbytes|zltail|zllen|entry1|entry2|zlend|
+    |:-:|:-:|:-:|:-:|:-:|:-:|
+    |字节数|last entry偏移量|entry个数|节点数据1|节点数据2|结束标记特殊值0xFF|
+    - entry结构
+      |pre_entry_length|encoding|content|
+      |:-:|:-:|:-:|
+      |前一个节点长度|编码|内容|
+  - 使用prevrawlen(前一个节点的长度)来替代prev指针,len替代next指针,因此在删除或新增节点时,可能会导致后续节点的级联更新问题
+- ListPack
+  ==紧凑型的序列化数据结构,Redis 6.0引入==
+  - 高效存储短小的字符串或整数结合
+  - 整体结构
+    |header|element1|element2|end|
+    |:-:|:-:|:-:|:-:|
+    |元数据总长度元素个数|数据1|数据2|结尾标识特殊字节|
+    - element结构
+      |encoding-type|element-data|element-tot-len|
+      |:-:|:-:|:-:|
+      |编码类型|实际数据|encoding-type+element-data总长度,不包含tot-len自身长度|
+  - 没有级联更新问题,因为每个entry仅记录自己的长度
 - QuickList
-  ==使用ZipList作为节点的双向链表==
+  ==使用ZipList作为节点的双向链表,Redis 3.2之后默认实现==
+  - 适合频繁修改和大量存储
   - *优点*
     解决了传统链表的内存占用问题
     控制了ZipList大小,解决了连续内存空间申请效率问题
     中间节点可压缩,进一步节约了空间
-- SkipList
+- SkipList跳表
   ==增删改查效率与红黑树基本一致,实现更简洁==
+  - 整体结构
+    |zskiplistNode|zskiplistNode|length|level|
+    |:-:|:-:|:-:|:-:|
+    |跳表节点头指针|跳表节点尾指针|节点数量|当前最大层数|
+    - level层结构
+      |head|tail|length|
+      |:-:|:-:|:-:|
+      |层数|前进指针(同层下一个节点)|跨度(同层节点间距离)|
+    - zskiplistNode跳表节点结构
+      |obj|score|backward|level[]|span|
+      |:-:|:-:|:-:|:-:|:-:|
+      |实际存储SDS字符串|排序分值|后退指针|层数组|跨度(与下一个节点的距离)|
+  - 优点
+    - 没有左旋右旋,无需维护树的平衡,实现简单
+    - 范围查询接近O(logn)时间复杂度,定位起点+遍历后续,红黑树不支持范围查询
+    - 层级和节点结构为动态的,可基于概率调整层数更灵活
   - sever.h `typedef struct zskiplist` `typedef struct zskiplistNode`
   - 元素按score升序排列,相同score再按ele字典排序
   - 每个节点都可能包含多层指针,指针层数越高,跨度越大
 - RedisObject
   ==Redis的所有5种数据类型的键和值都会被封装成一个RedisObject==
+  - 整体结构
+    |type|encoding|lru|refcount|ptr|
+    |:-:|:-:|:-:|:-:|:-:|
+    |对象类型，标识是哪种 Redis 数据类型|对象编码，标识底层实现的数据结构|最近最少使用信息，用于内存回收|引用计数，用于内存回收|实际数据指针|
   - server.h `typedef struct redisObject`
 ##### Redis的5种数据类型
 - String
-  - encoding
+  - 结构实现
     - int
     - raw(基于SDS)
     - embstr(也是基于SDS,大小<44B时>)
@@ -109,26 +162,28 @@ markmap:
   - geo
   - hyperloglog
 - hash
-  - encoding
+  - 结构实现
     - ZipList
-    - HashTable
+    - Dict(哈希表)
 - list
-  - encoding
+  - 结构实现
     - QuickList
-    - command
-      - lpush `t_list.c void pushGenericCommand()`
+    - ListPack
+  - command
+    - lpush `t_list.c void pushGenericCommand()`
 - set
-  - encoding
+  - 结构实现
     - intset
-    - HashTable
+    - Dict(哈希表)
   - command
     - SADD,SREM
     - SMEMBERS,SISMEMBER
     - SINTER,SDIFF,SUNION,SMOVE 
 - z_set(sorted sets)
-  - encoding
+  - 结构实现
     - ZipList
-    - HashTable
+    - Dict(哈希表)
+    - ListPack
 #### 网络模型
 ##### 5种IO模型*UNIX网络编程一书*
 - 5种IO模型对比
