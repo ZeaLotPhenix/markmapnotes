@@ -66,8 +66,55 @@
     |Kafka|Pull|TCP|partition内有序|否|是,异步|否|KafkaSteam支持|支持offset|否|否|
     |RocketMQ|Pull|TCP,JMS,OpenMessaging|严格有序,支持扩容|是|是,异步|是|支持|支持时间戳和offset|否|是|
 #### Kafka
+- 整体架构
+    - [官方文档](https://kafka.apache.org/documentation/#design)
+    - 架构图 <!-- markmap: foldAll -->
+        - ![KafkaMQ架构图](https://developer.qcloudimg.com/http-save/yehe-3335805/7b71e45172c998e4b0dad51af096ae51.png)
+    - 基本概念
+        - Topic主题
+        消息发布的分类单位和数据流分类单位,包含有至少一个分区,消息仅在各自分区内有序
+            - Partition分区
+            一个有序、不可变且持续追加的提交日志
+                - 持久化
+                Kafka集群会按照可配置的保留时长，持久化存储所有已发布的消息记录——无论这些记录是否已被消费
+                - 容错性
+                每个分区可以有零或多个副本,存储在其他的kafka server上
+                - 消息Record
+                最小数据传输单元
+                - Offset消费位点
+                由Kafka的内部主题_consumer_offsets来保存所有消费者或消费者组的消费位点
+        - [Producer生产者](https://kafka.apache.org/documentation/#theproducer)
+        Kafka由生产者负责消息的负载均衡,默认轮询算法,保证相同key的消息始终进入同一分区(有序性)
+            - 客户端负载均衡
+                - 生产者直接向leader分区的broker发送消息
+                - 客户端从服务端拉取对应Topic的可用Broker元信息
+                - 支持轮询/随机和自定义语义分区等策略
+            - 异步发送
+                - 通过可配置的缓冲区大小,将待发送的消息缓存后打包压缩发送
+        - Consumer消费者组
+        Consumer消费者构成了消费者组,一个消息会只会被所有同名消费者组里的一个消费者消费,但可以广播到所有不同名的消费者组
+            - 长轮询优化: 通过可配置的最小抓取字节数或者最大等待时间避免无数据时空转
+    - 设计原理
+        - [网络层](https://kafka.apache.org/documentation/#networklayer)
+            - 线程模型:单线程接受器+多处理器线程
+    - 特性
+        - [消息批处理](https://kafka.apache.org/documentation/#maximizingefficiency)
+        Kafka的生产者会将消息打包压缩成消息集在一次请求中批量发送,服务端会批量将消息块追加到日志中，而消费者也能一次性获取大段连续的消息块
+            - 形成更大的网络数据包
+            - 实现更大批量的顺序磁盘写入
+            - 分配连续的内存区块
+            - 将随机写优化为了顺序写
+            - 消息集始终都是以压缩包的粒度发送/存储(服务端仅解压校验,存储在分区中仍然是压缩包格式)/消费的
+        - 数据零拷贝
+        通过自定义的生产者、Broker和消费者三者统一的标准化二进制消息格式,实现了数据块无需修改即可直接传输,避免了序列化的开销
+            - 借助现代Linux系统的零拷贝传输机制[sendfiles system call](https://man7.org/linux/man-pages/man2/sendfile.2.html)直接在内核空间完成数据页到Socket的拷贝,绕过了用户空间缓冲区
+        - [Push-Pull模式](https://kafka.apache.org/documentation/#design_pull)
+        Kafka采取了生产者Push推送消息,消费者Pull拉取消息的模式
+            - 允许消费者和生产者以不同的速率处理和生产消息
+        - 事务支持
 #### RocketMQ
 - 整体架构
+    - [官方文档](https://rocketmq.apache.org/zh/docs/quickStart/01quickstart)
     - 架构图 <!-- markmap: foldAll -->
         - ![RocketMQ架构图](https://developer.qcloudimg.com/http-save/yehe-11130581/8a3810d27d4ab3572cf0be800a2f9401.png)
     - 基本概念
