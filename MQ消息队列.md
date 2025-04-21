@@ -66,7 +66,7 @@
     |Kafka|Pull|TCP|partition内有序|否|是,异步|否|KafkaSteam支持|支持offset|否|否|
     |RocketMQ|Pull|TCP,JMS,OpenMessaging|严格有序,支持扩容|是|是,异步|是|支持|支持时间戳和offset|否|是|
 #### Kafka
-- 整体架构
+- 架构概览
     - [官方文档](https://kafka.apache.org/documentation/#design)
     - 架构图 <!-- markmap: foldAll -->
         - ![KafkaMQ架构图](https://developer.qcloudimg.com/http-save/yehe-3335805/7b71e45172c998e4b0dad51af096ae51.png)
@@ -113,7 +113,7 @@
             - 允许消费者和生产者以不同的速率处理和生产消息
         - 事务支持
 #### RocketMQ
-- 整体架构
+- 架构概览
     - [官方文档](https://rocketmq.apache.org/zh/docs/quickStart/01quickstart)
     - 架构图 <!-- markmap: foldAll -->
         - ![RocketMQ架构图](https://developer.qcloudimg.com/http-save/yehe-11130581/8a3810d27d4ab3572cf0be800a2f9401.png)
@@ -255,5 +255,73 @@
                 - 负责接受Broker启动时的注册信息
                 - 接受生产者拉取Broker地址列表
                 - 接受消费者拉取注册表
-#### RabbitMQ
 #### QMQ
+- 架构盖伦
+    - 架构图 <!-- markmap: foldAll -->
+        - ![Qmq架构图](https://img2024.cnblogs.com/blog/3556556/202504/3556556-20250422005827488-448676790.png)
+            - 交互流程
+                1. delay server 向meta server注册
+                2. 实时server 向meta server注册
+                3. producer在发送消息前需要询问meta server获取server list
+                4. meta server返回server list给producer(根据producer请求的消息类型返回不同的server list)
+                5. producer发送延时/定时消息
+                6. 延时时间已到，delay server将消息投递给实时server
+                7. producer发送实时消息
+                8. consumer需要拉取消息，在拉取之前向meta server获取server list(只会获取实时server的list)
+                9. meta server返回server list给consumer
+                10. consumer向实时server发起pull请求
+                11. 实时server将消息返回给consumer
+    - 基本概念
+        - meta server
+        提供集群管理和集群发现的作用
+        - server
+        提供实时消息服务
+        - delay server
+        提供延时/定时消息服务，延时消息先在delay server排队，时间到之后再发送给server
+        - producer消息生产者
+        - consumer消息消费者
+        - log消息存储模型
+        Qmq使用消息记录log来取代partition,实现了Consumer的弹性扩展和类似RocketMQ的消息合并精简设计
+            - 架构图 <!-- markmap: foldAll -->
+                - ![Qmq存储模型](https://img2024.cnblogs.com/blog/3556556/202504/3556556-20250422011142699-503857730.png)
+                    - 图片解释
+                        - message log方框上方的数字:3,6,9几表示这几条消息在message log中的偏移
+                        - consume log中方框内的数字3,6,9,20正对应着message log的偏移，表示这几个位置上的消息都是subject1的消息，consume log方框上方的1,2,3,4表示这几个方框在consume log中的逻辑偏移
+                        - pull log方框内的内容对应着consume log的逻辑偏移，而pull log方框外的数字表示pull log的逻辑偏移
+            - message log
+            所有subject的消息进入该log，消息的主存储
+            - consume log(类似Topic)
+            consume log存储的是message log的索引信息
+            - pull log(类似_consumer_offsets)
+            每个consumer拉取消息的时候会产生pull log，pull log记录的是拉取的消息在consume log中的sequence,代表消费位点记录
+    - 特性
+        - 延迟/定时消息
+        QMQ提供任意时间的延时/定时消息，你可以指定消息在未来两年内(可配置)任意时间内投递,比RocketMQ固定延迟level更灵活
+            - 设计原理
+                - 两层hash wheel
+                    - 磁盘轮
+                    第一层位于磁盘上，默认每个小时为一个刻度(可配置)，每个刻度会生成一个日志文件(schedule log),刻度总数=总时长/刻度时长(默认最大两年为 2 * 366 * 24 = 17568 个文件)
+                    - 内存轮
+                    第二层在内存中，内存中的hash wheel则是以500ms为一个刻度,当消息的投递时间即将到来的时候，会将这个小时的消息索引(索引包括消息在schedule log中的offset和size)从磁盘文件加载到内存中的hash wheel上
+                - 三级log
+                在延时/定时消息里也存在三种log
+                    - message log
+                    和实时消息里的message log类似，收到消息后append到该log就返回给producer，相当于WAL,消息内容从message log同步到了schedule log，所以历史message log都可以删除,只需要占用极小的存储空间(可用SSD优化性能)
+                    - schedule log
+                    包含完整的消息内容,按照投递时间组织，每个小时一个,可删除过期消息。该log是回放message log后根据延时时间放置对应的log上，这是上面描述的两层hash wheel的第一层，位于磁盘上
+                    - dispatch log
+                    延时/定时消息投递成功后写入，主要用于在应用重启后能够确定哪些消息已经投递，dispatch log里写入的是消息的offset，不包含消息内容
+        - 消息过滤
+        - 事务消息
+        QMQ在Producer端利用数据库事务来实现事务消息,有自己独立的qmq_produce的库或者表
+        - 极致扩缩容
+        通过移除partition的设计,避免了partition与consumer的映射关系,实现了极致的消费者扩缩容
+        - 幂等消费ExactlyOnce
+        通过维护一张消息消费表来实现,收到消息后先校验是否重复消费,是则忽略,否则消费并新增记录,消费失败时删除记录
+        - 高可用
+            - 数据分片
+            因为移除了Partition设计,所以类似实现了RedisCluster的数据分片的高可用
+            - 主从复制
+            Qmq使用了异步刷盘策略,当配置了从节点时,接受请求后会确保所有从节点刷盘成功后才会返回成功.
+
+#### RabbitMQ
