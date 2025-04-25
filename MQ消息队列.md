@@ -94,6 +94,13 @@
         - Consumer消费者组
         Consumer消费者构成了消费者组,一个消息会只会被所有同名消费者组里的一个消费者消费,但可以广播到所有不同名的消费者组
             - 长轮询优化: 通过可配置的最小抓取字节数或者最大等待时间避免无数据时空转
+            - 消费点位追踪[Consumer Offset Tracking](https://kafka.apache.org/documentation/#impl_offsettracking)
+                - 组协调器(group coordinator)
+                Kafka可为每个消费者组提供一个名为组协调器(group coordinator)的broker用以专门保存和同步该组的offset位点信息,消费者组通过组名与之映射.broker为__consumer_offsets主题每个partition对应的leader分区broker
+                - 内部特殊主题(__consumer_offsets)
+                组协调器接受到消费者的OffsetCommitRequest请求后,会向一个名为__consumer_offsets的kafka的特殊主题发送消息用以记录消费位点,只有当该主题的所有副本都写入了该位点消息后才会返回成功.超时失败时,consumer会重试发送请求.
+                    - 组协调器会也会将offset缓存在内存中来让消费者快速fetch获取已消费位点,当协调器初始化或者被重新选举为Leader时会重新拉取位点刷新缓存
+                    - __consumer_offsets主题会定期压缩主题内的消息,仅需维持每个partition最新的消费位点
     - 设计原理
         - [网络层](https://kafka.apache.org/documentation/#networklayer)
             - 线程模型:单线程接受器+多处理器线程
@@ -112,6 +119,13 @@
         Kafka采取了生产者Push推送消息,消费者Pull拉取消息的模式
             - 允许消费者和生产者以不同的速率处理和生产消息
         - 事务支持
+        - [流式处理](https://kafka.apache.org/documentation/#streams)
+        Kakfa提供的一个轻量级流处理库,用以处理和分析由kakfa存储的数据
+            - 支持特性
+                - 状态管理（如聚合、连接操作）
+                - 窗口处理（时间窗口、会话窗口）
+                - Exactly-once语义
+                - 基于DSL（filter、map、join等）和Processor API的低级控制
 #### RocketMQ
 - 架构概览
     - [官方文档](https://rocketmq.apache.org/zh/docs/quickStart/01quickstart)
